@@ -24,15 +24,14 @@ const shopify = shopifyApp({
   },
 
 hooks: {
-  afterAuth: async ({ admin, session }) => {
-    try {
-      console.log("[afterAuth] shop=", session?.shop);
-      const result = await ensureCartTransform(admin);
-      console.log("[afterAuth] ensureCartTransform result:", result);
-    } catch (e) {
-      console.log("[afterAuth] ensureCartTransform crashed:", e);
-      // NO throw -> evita 500
-    }
+  afterAuth: async ({ admin }) => {
+    const shopRes = await admin.graphql(`#graphql
+      query { shop { id } }
+    `);
+    const shopJson = await shopRes.json();
+    const shopId = shopJson?.data?.shop?.id;
+
+    await ensureCartTransform(admin, shopId);
   },
 },
 

@@ -1,3 +1,4 @@
+// app/routes/_index.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -164,7 +165,8 @@ export const action = async ({ request }) => {
       if (!inputType) {
         return {
           ok: false,
-          error: "Unable to determine the input type for productVariantsBulkUpdate.",
+          error:
+            "Unable to determine the input type for productVariantsBulkUpdate.",
         };
       }
 
@@ -207,7 +209,8 @@ export const action = async ({ request }) => {
       if (!variantsType) {
         return {
           ok: false,
-          error: "Unable to determine the variants type for productVariantsBulkUpdate.",
+          error:
+            "Unable to determine the variants type for productVariantsBulkUpdate.",
         };
       }
 
@@ -244,8 +247,7 @@ export const action = async ({ request }) => {
 
     return {
       ok: false,
-      error:
-        "Unknown signature for productVariantsBulkUpdate in your API.",
+      error: "Unknown signature for productVariantsBulkUpdate in your API.",
     };
   };
 
@@ -461,7 +463,10 @@ export const action = async ({ request }) => {
 
     const productId = node?.product?.id;
     if (!productId)
-      return { ok: false, error: "Unable to retrieve productId from the variant." };
+      return {
+        ok: false,
+        error: "Unable to retrieve productId from the variant.",
+      };
 
     const up = await updateVariantPriceBulk({
       productId,
@@ -497,7 +502,12 @@ export const action = async ({ request }) => {
         };
     }
 
-    return { ok: true, updated: true, variantId, shop: { id: shopId, domain } };
+    return {
+      ok: true,
+      updated: true,
+      variantId,
+      shop: { id: shopId, domain },
+    };
   }
 
   /** -------------------------
@@ -537,7 +547,7 @@ export const action = async ({ request }) => {
   const productId = createProductJson?.data?.productCreate?.product?.id;
   if (!productId) return { ok: false, error: "Unable to retrieve productId." };
 
-  // 2) create option (this can create/adjust the variant automatically)
+  // 2) create option
   const optRes = await admin.graphql(
     `#graphql
     mutation CreateOptions($productId: ID!, $options: [OptionCreateInput!]!) {
@@ -546,7 +556,12 @@ export const action = async ({ request }) => {
         userErrors { field message }
       }
     }`,
-    { variables: { productId, options: [{ name: "Tipo", values: [{ name: variantLabel }] }] } }
+    {
+      variables: {
+        productId,
+        options: [{ name: "Tipo", values: [{ name: variantLabel }] }],
+      },
+    }
   );
 
   const optJson = await optRes.json();
@@ -558,7 +573,7 @@ export const action = async ({ request }) => {
       raw: optJson,
     };
 
-  // 3) find the variant (do NOT create another one)
+  // 3) find the variant
   const variantsRes = await admin.graphql(
     `#graphql
     query GetProductVariants($id: ID!) {
@@ -580,7 +595,9 @@ export const action = async ({ request }) => {
   const variants = variantsJson?.data?.product?.variants?.nodes || [];
 
   const match = variants.find((v) =>
-    (v.selectedOptions || []).some((o) => o.name === "Tipo" && o.value === variantLabel)
+    (v.selectedOptions || []).some(
+      (o) => o.name === "Tipo" && o.value === variantLabel
+    )
   );
   const fallback = variants.find(
     (v) => (v.title || "").toLowerCase() === variantLabel.toLowerCase()
@@ -595,7 +612,7 @@ export const action = async ({ request }) => {
     };
   }
 
-  // 4) update price via bulk update
+  // 4) update price
   const up = await updateVariantPriceBulk({
     productId,
     variantId: targetVariantId,
@@ -672,15 +689,34 @@ export const action = async ({ request }) => {
 /** ====== UI ====== */
 export default function Index() {
   const fetcher = useFetcher();
+  const healthFetcher = useFetcher();
   const shopify = useAppBridge();
   const loaderData = useLoaderData();
 
   const [productTitle, setProductTitle] = useState("Service fee");
-  const [variantTitle, setVariantTitle] = useState(loaderData?.savedVariantLabel || "Fee");
+  const [variantTitle, setVariantTitle] = useState(
+    loaderData?.savedVariantLabel || "Fee"
+  );
   const [basePrice, setBasePrice] = useState("0.00");
 
+  const [health, setHealth] = useState(null);
+
   const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) && fetcher.formMethod === "POST";
+    ["loading", "submitting"].includes(fetcher.state) &&
+    fetcher.formMethod === "POST";
+
+  const isRepairing = healthFetcher.state !== "idle";
+
+  // load health on page open
+  useEffect(() => {
+    healthFetcher.load("/api/health");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // store health response
+  useEffect(() => {
+    if (healthFetcher.data) setHealth(healthFetcher.data);
+  }, [healthFetcher.data]);
 
   const savedVariantGid = useMemo(() => {
     if (fetcher.data?.cleared) return "";
@@ -701,9 +737,22 @@ export default function Index() {
       shopify.toast.show("✅ Variant updated");
     if (fetcher.data?.ok && fetcher.data?.cleared)
       shopify.toast.show("🧹 Reference cleared. You can now create a new one.");
-    if (fetcher.data?.error)
-      shopify.toast.show(`❌ ${fetcher.data.error}`);
+    if (fetcher.data?.error) shopify.toast.show(`❌ ${fetcher.data.error}`);
   }, [fetcher.data, shopify]);
+
+  // toast for health/repair
+  useEffect(() => {
+    if (healthFetcher.data?.ok && healthFetcher.data?.repaired)
+      shopify.toast.show("✅ Cart Transform repaired / reinstalled");
+    if (healthFetcher.data?.ok && healthFetcher.data?.repaired === false)
+      shopify.toast.show("✅ Cart Transform already OK");
+    if (healthFetcher.data?.ok === false && healthFetcher.data?.error)
+      shopify.toast.show(`❌ ${healthFetcher.data.error}`);
+
+    // refresh status after repair
+    if (healthFetcher.data?.ok && healthFetcher.data?.repaired)
+      healthFetcher.load("/api/health");
+  }, [healthFetcher.data, shopify]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submitCreate = () => {
     const fd = new FormData();
@@ -729,12 +778,56 @@ export default function Index() {
     fetcher.submit(fd, { method: "POST" });
   };
 
+  const repairTransform = () => {
+    const fd = new FormData();
+    healthFetcher.submit(fd, { method: "POST", action: "/api/health" });
+  };
+
   return (
     <s-page heading="Custom Fee Setup">
+      {/* ✅ NEW: Health check section */}
+      <s-section heading="Function health check (Cart Transform)">
+        {health ? (
+          <s-box
+            padding="base"
+            borderWidth="base"
+            borderRadius="base"
+            background="subdued"
+          >
+            <s-paragraph>
+              Status:{" "}
+              {health?.cartTransform?.exists ? "✅ OK" : "❌ Missing / deleted"}
+            </s-paragraph>
+
+            <pre style={{ margin: 0 }}>
+              <code>{health?.cartTransform?.id || "(no id saved yet)"}</code>
+            </pre>
+
+            {!health?.cartTransform?.exists ? (
+              <s-stack direction="inline" gap="base">
+                <s-button
+                  onClick={repairTransform}
+                  {...(isRepairing ? { loading: true } : {})}
+                >
+                  Repair / Reinstall
+                </s-button>
+              </s-stack>
+            ) : null}
+          </s-box>
+        ) : (
+          <s-paragraph>Loading health status...</s-paragraph>
+        )}
+      </s-section>
+
       <s-section heading="Current status (saved variant validation)">
         {savedVariantGid ? (
           variantExists ? (
-            <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+            <s-box
+              padding="base"
+              borderWidth="base"
+              borderRadius="base"
+              background="subdued"
+            >
               <s-paragraph>✅ The saved variant exists. You can edit it:</s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>
@@ -746,9 +839,15 @@ export default function Index() {
               </pre>
             </s-box>
           ) : (
-            <s-box padding="base" borderWidth="base" borderRadius="base" background="critical-subdued">
+            <s-box
+              padding="base"
+              borderWidth="base"
+              borderRadius="base"
+              background="critical-subdued"
+            >
               <s-paragraph>
-                ⚠️ A Variant GID is saved, but the variant no longer exists (it was deleted, or the product was deleted).
+                ⚠️ A Variant GID is saved, but the variant no longer exists (it was
+                deleted, or the product was deleted).
               </s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>{savedVariantGid}</code>
@@ -804,7 +903,12 @@ export default function Index() {
 
       <s-section heading="Current Variant GID">
         {savedVariantGid ? (
-          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+          <s-box
+            padding="base"
+            borderWidth="base"
+            borderRadius="base"
+            background="subdued"
+          >
             <pre style={{ margin: 0 }}>
               <code>{savedVariantGid}</code>
             </pre>
@@ -818,10 +922,7 @@ export default function Index() {
         <s-unordered-list>
           <s-list-item>
             For support inquiries, please contact{" "}
-            <s-link href="mailto:help@nexonixcore.com">
-              help@nexonixcore.com
-            </s-link>
-            .
+            <s-link href="mailto:help@nexonixcore.com">help@nexonixcore.com</s-link>.
           </s-list-item>
         </s-unordered-list>
       </s-section>
