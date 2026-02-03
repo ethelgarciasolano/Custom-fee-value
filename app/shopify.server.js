@@ -1,3 +1,4 @@
+// app/shopify.server.js
 import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
@@ -6,6 +7,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { ensureCartTransform } from "./lib/ensureCartTransform";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -16,17 +18,36 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+
   future: {
     expiringOfflineAccessTokens: true,
   },
+
+  hooks: {
+    // Se ejecuta cuando termina auth (incluye instalación)
+    afterAuth: async ({ admin, session }) => {
+      try {
+        console.log("[afterAuth] shop=", session?.shop);
+
+        const r = await ensureCartTransform(admin, "custom-fee-plus");
+        console.log("[afterAuth] ensureCartTransform result:", r);
+      } catch (e) {
+        // NO romper el flujo de instalación
+        console.error("[afterAuth] ensureCartTransform FAILED:", e);
+      }
+    },
+  },
+
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
 
 export default shopify;
+
 export const apiVersion = ApiVersion.October25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
+
 export const authenticate = shopify.authenticate;
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;

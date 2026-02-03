@@ -1,51 +1,31 @@
-import { PassThrough } from "stream";
-import { renderToPipeableStream } from "react-dom/server";
+// app/entry.server.jsx
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { ServerRouter } from "react-router";
-import { createReadableStreamFromReadable } from "@react-router/node";
-import { isbot } from "isbot";
-import { addDocumentResponseHeaders } from "./shopify.server";
 
-export const streamTimeout = 5000;
+// ✅ React 18 / Vite: react-dom/server puede comportarse como CJS en algunos setups
+import pkg from "react-dom/server";
+const { renderToReadableStream } = pkg;
 
 export default async function handleRequest(
   request,
   responseStatusCode,
   responseHeaders,
-  reactRouterContext,
+  routerContext
 ) {
-  addDocumentResponseHeaders(request, responseHeaders);
-  const userAgent = request.headers.get("user-agent");
-  const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
+  // ✅ Headers correctos para embedded apps (CSP, etc.)
+  const headersFromBoundary = boundary.headers({ request, responseHeaders });
+  for (const [key, value] of headersFromBoundary.entries()) {
+    responseHeaders.set(key, value);
+  }
 
-  return new Promise((resolve, reject) => {
-    const { pipe, abort } = renderToPipeableStream(
-      <ServerRouter context={reactRouterContext} url={request.url} />,
-      {
-        [callbackName]: () => {
-          const body = new PassThrough();
-          const stream = createReadableStreamFromReadable(body);
+  const stream = await renderToReadableStream(
+    <ServerRouter context={routerContext} url={request.url} />
+  );
 
-          responseHeaders.set("Content-Type", "text/html");
-          resolve(
-            new Response(stream, {
-              headers: responseHeaders,
-              status: responseStatusCode,
-            }),
-          );
-          pipe(body);
-        },
-        onShellError(error) {
-          reject(error);
-        },
-        onError(error) {
-          responseStatusCode = 500;
-          console.error(error);
-        },
-      },
-    );
+  responseHeaders.set("Content-Type", "text/html; charset=utf-8");
 
-    // Automatically timeout the React renderer after 6 seconds, which ensures
-    // React has enough time to flush down the rejected boundary contents
-    setTimeout(abort, streamTimeout + 1000);
+  return new Response(stream, {
+    status: responseStatusCode,
+    headers: responseHeaders,
   });
 }

@@ -79,31 +79,41 @@ fn cart_transform_run(
 ) -> Result<schema::CartTransformRunResult> {
     let cart_ref = input.cart();
 
+    log!("=== cart_transform_run: start ===");
+
     // 1) Leer rules desde attribute _fee_rules
-    let rules_text: String = cart_ref
+    let rules_text_raw: String = cart_ref
         .fee_rules()
         .and_then(|a: &FeeRules| a.value().cloned())
         .unwrap_or_default();
 
-    let rules_text = rules_text.trim().to_string();
+    log!("_fee_rules raw: '{}'", rules_text_raw);
+
+    let rules_text = rules_text_raw.trim().to_string();
     if rules_text.is_empty() {
+        log!("_fee_rules is empty -> no operations");
         return Ok(schema::CartTransformRunResult { operations: vec![] });
     }
 
     let rules = parse_rules(&rules_text);
+    log!("Parsed rules count: {}", rules.len());
+
     if rules.is_empty() {
+        log!("No valid rules parsed -> no operations");
         return Ok(schema::CartTransformRunResult { operations: vec![] });
     }
 
     // 2) Leer fee variant gid dinámico desde attribute _fee_variant_gid
-    let fee_variant_gid: String = cart_ref
+    let fee_variant_gid_raw: String = cart_ref
         .fee_variant_gid()
         .and_then(|a: &FeeVariantGid| a.value().cloned())
         .unwrap_or_default();
 
-    let fee_variant_gid = fee_variant_gid.trim().to_string();
+    log!("_fee_variant_gid raw: '{}'", fee_variant_gid_raw);
+
+    let fee_variant_gid = fee_variant_gid_raw.trim().to_string();
     if fee_variant_gid.is_empty() {
-        // Si el checkout aún no lo escribió, no hacemos nada
+        log!("_fee_variant_gid is empty -> no operations");
         return Ok(schema::CartTransformRunResult { operations: vec![] });
     }
 
@@ -111,37 +121,70 @@ fn cart_transform_run(
     let mut subtotal_f64: f64 = 0.0;
     let mut fee_line_id: Option<schema::Id> = None;
 
+    log!("Iterating cart lines...");
     for line in cart_ref.lines().iter() {
         let line: &cart::Lines = line;
 
-        let is_fee_line = match line.merchandise() {
-            Merchandise::ProductVariant(v) => v.id().to_string() == fee_variant_gid,
-            _ => false,
-        };
+        let line_id_str = line.id().to_string();
+        let qty_u32 = *line.quantity();
+        let qty_f64 = qty_u32 as f64;
 
-        if is_fee_line {
-            fee_line_id = Some(line.id().clone());
-            continue;
+        match line.merchandise() {
+            Merchandise::ProductVariant(v) => {
+                let merch_id = v.id().to_string();
+                log!(
+                    "Line id={} qty={} merch(ProductVariant)={}",
+                    line_id_str,
+                    qty_u32,
+                    merch_id
+                );
+
+                // detectar fee line
+                if merch_id == fee_variant_gid {
+                    log!("➡️ Fee line detected (matches _fee_variant_gid)");
+                    fee_line_id = Some(line.id().clone());
+                    continue;
+                }
+
+                // sumar al subtotal
+                let unit_amount: Decimal = line.cost().amount_per_quantity().amount().clone();
+                let unit_f64 = decimal_to_f64(&unit_amount);
+                subtotal_f64 += unit_f64 * qty_f64;
+
+                log!(
+                    "Subtotal add: unit={} qty={} -> subtotal_now={}",
+                    unit_f64,
+                    qty_f64,
+                    subtotal_f64
+                );
+            }
+            _ => {
+                log!(
+                    "Line id={} qty={} merch(Non-ProductVariant) -> ignored for subtotal",
+                    line_id_str,
+                    qty_u32
+                );
+                // si quieres, aquí podrías decidir sumar también otros tipos,
+                // pero normalmente no aplica.
+            }
         }
-
-        let unit_amount: Decimal = line.cost().amount_per_quantity().amount().clone();
-        let unit_f64 = decimal_to_f64(&unit_amount);
-        let qty = *line.quantity() as f64;
-
-        subtotal_f64 += unit_f64 * qty;
     }
 
+    log!("Subtotal excluding fee: {}", subtotal_f64);
+
     let Some(fee_line_id) = fee_line_id else {
-        // Si aún no existe la línea fee, tu UI extension debe agregarla
+        log!("Fee line NOT found in cart -> no operations (UI must add it)");
         return Ok(schema::CartTransformRunResult { operations: vec![] });
     };
 
     // 4) Determinar % aplicable
     let percent = find_percent(&rules, subtotal_f64).unwrap_or(0.0);
+    log!("Applied percent: {}", percent);
 
     // 5) fee = subtotal * (%/100)
     let mut fee_amount = subtotal_f64 * (percent / 100.0);
     fee_amount = round_to_2(fee_amount);
+    log!("Calculated fee_amount (rounded): {}", fee_amount);
 
     // 6) Actualizar precio de la línea fee
     let price_adj = schema::LineUpdateOperationPriceAdjustment {
@@ -158,6 +201,9 @@ fn cart_transform_run(
         image: None,
         price: Some(price_adj),
     };
+
+    log!("Returning LineUpdate operation for fee line");
+    log!("=== cart_transform_run: end ===");
 
     Ok(schema::CartTransformRunResult {
         operations: vec![schema::Operation::LineUpdate(op)],

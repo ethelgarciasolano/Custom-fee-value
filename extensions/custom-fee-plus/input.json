@@ -1,0 +1,28 @@
+{
+  "cart": {
+    "fee_rules": { "value": "0-200000=10%\n200001-500000=7%\n500001-999999999=3%" },
+    "fee_variant_gid": { "value": "gid://shopify/ProductVariant/1234567890" },
+    "lines": [
+      {
+        "id": "gid://shopify/CartLine/1",
+        "quantity": 1,
+        "cost": { "amountPerQuantity": { "amount": "100000.00" } },
+        "merchandise": {
+          "__typename": "ProductVariant",
+          "id": "gid://shopify/ProductVariant/111",
+          "title": "Product A"
+        }
+      },
+      {
+        "id": "gid://shopify/CartLine/fee",
+        "quantity": 1,
+        "cost": { "amountPerQuantity": { "amount": "0.00" } },
+        "merchandise": {
+          "__typename": "ProductVariant",
+          "id": "gid://shopify/ProductVariant/1234567890",
+          "title": "Fee"
+        }
+      }
+    ]
+  }
+}
