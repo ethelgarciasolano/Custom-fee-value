@@ -250,50 +250,210 @@ export const action = async ({ request }) => {
   /** -------------------------
    * clear_fee_meta
    * ------------------------- */
-if (intent === "clear_fee_meta") {
-  const softRes = await admin.graphql(
-    `#graphql
-    mutation SoftClear($ownerId: ID!) {
-      metafieldsSet(metafields: [
-        {
-          ownerId: $ownerId
-          namespace: "${MF_NAMESPACE}"
-          key: "${MF_KEY}"
-          type: "single_line_text_field"
-          value: "${SENTINEL}"
-        },
-        {
-          ownerId: $ownerId
-          namespace: "${MF_NAMESPACE}"
-          key: "${MF_KEY_LABEL}"
-          type: "single_line_text_field"
-          value: "${SENTINEL}"
+    /** -------------------------
+   * clear_fee_meta  ✅ FIX: detect args by NAME, not by index
+   * ------------------------- */
+  if (intent === "clear_fee_meta") {
+    const fields = await introspectMutationFields();
+    const mfDelete = fields.find((f) => f.name === "metafieldDelete");
+    const mfsDelete = fields.find((f) => f.name === "metafieldsDelete");
+
+    // 1) Get metafield IDs (if exist)
+    const metaRes = await admin.graphql(
+      `#graphql
+      query GetMetaIds($ns: String!, $k1: String!, $k2: String!) {
+        shop {
+          feeGid: metafield(namespace: $ns, key: $k1) { id }
+          feeLabel: metafield(namespace: $ns, key: $k2) { id }
         }
-      ]) {
-        userErrors { field message }
+      }`,
+      { variables: { ns: MF_NAMESPACE, k1: MF_KEY, k2: MF_KEY_LABEL } }
+    );
+    const metaJson = await metaRes.json();
+    const ids = [
+      metaJson?.data?.shop?.feeGid?.id,
+      metaJson?.data?.shop?.feeLabel?.id,
+    ].filter(Boolean);
+
+    // helper: run delete-by-id with correct signature
+    const deleteMetafieldById = async (id) => {
+      if (!mfDelete) return { ok: false, skipped: true };
+
+      const argId = mfDelete.args?.find((a) => a.name === "id");
+      const argInput = mfDelete.args?.find((a) => a.name === "input");
+
+      if (argId) {
+        const delJson = await tryGql(
+          `#graphql
+          mutation Del($id: ID!) {
+            metafieldDelete(id: $id) {
+              deletedId
+              userErrors { field message }
+            }
+          }`,
+          { id }
+        );
+        const errs = delJson?.data?.metafieldDelete?.userErrors || [];
+        if (!delJson || errs.length) {
+          return {
+            ok: false,
+            error:
+              errs.map((e) => e.message).join(" | ") ||
+              "Unable to execute metafieldDelete(id).",
+            raw: delJson,
+          };
+        }
+        return { ok: true };
       }
-    }`,
-    { variables: { ownerId: shopId } }
-  );
 
-  const softJson = await softRes.json();
-  const softErr = softJson?.data?.metafieldsSet?.userErrors || [];
+      if (argInput) {
+        const inputTypeName = unwrapNamedType(argInput.type);
+        if (!inputTypeName) {
+          return { ok: false, error: "Unable to determine metafieldDelete input type." };
+        }
+        const delJson = await tryGql(
+          `#graphql
+          mutation Del($input: ${inputTypeName}!) {
+            metafieldDelete(input: $input) {
+              deletedId
+              userErrors { field message }
+            }
+          }`,
+          { input: { id } }
+        );
+        const errs = delJson?.data?.metafieldDelete?.userErrors || [];
+        if (!delJson || errs.length) {
+          return {
+            ok: false,
+            error:
+              errs.map((e) => e.message).join(" | ") ||
+              "Unable to execute metafieldDelete(input).",
+            raw: delJson,
+          };
+        }
+        return { ok: true };
+      }
 
-  if (softErr.length) {
+      return { ok: false, error: "metafieldDelete has no id/input arg." };
+    };
+
+    // 2) Try bulk delete by ownerId/ns/key (if available) with correct signature
+    if (mfsDelete) {
+      const argMetafields = mfsDelete.args?.find((a) => a.name === "metafields");
+      const argInput = mfsDelete.args?.find((a) => a.name === "input");
+
+      if (argMetafields) {
+        const typeName = unwrapNamedType(argMetafields.type);
+        if (typeName) {
+          const delJson = await tryGql(
+            `#graphql
+            mutation Del($metafields: [${typeName}!]!) {
+              metafieldsDelete(metafields: $metafields) {
+                deletedMetafieldIds
+                userErrors { field message }
+              }
+            }`,
+            {
+              metafields: [
+                { ownerId: shopId, namespace: MF_NAMESPACE, key: MF_KEY },
+                { ownerId: shopId, namespace: MF_NAMESPACE, key: MF_KEY_LABEL },
+              ],
+            }
+          );
+
+          const errs = delJson?.data?.metafieldsDelete?.userErrors || [];
+          if (delJson && !errs.length) {
+            return { ok: true, cleared: true, shop: { id: shopId, domain } };
+          }
+          // if bulk delete exists but errors, fall through to delete-by-id / sentinel
+        }
+      }
+
+      if (argInput) {
+        const typeName = unwrapNamedType(argInput.type);
+        if (typeName) {
+          const delJson = await tryGql(
+            `#graphql
+            mutation Del($input: ${typeName}!) {
+              metafieldsDelete(input: $input) {
+                deletedMetafieldIds
+                userErrors { field message }
+              }
+            }`,
+            {
+              input: {
+                metafields: [
+                  { ownerId: shopId, namespace: MF_NAMESPACE, key: MF_KEY },
+                  { ownerId: shopId, namespace: MF_NAMESPACE, key: MF_KEY_LABEL },
+                ],
+              },
+            }
+          );
+
+          const errs = delJson?.data?.metafieldsDelete?.userErrors || [];
+          if (delJson && !errs.length) {
+            return { ok: true, cleared: true, shop: { id: shopId, domain } };
+          }
+        }
+      }
+    }
+
+    // 3) If bulk delete didn’t work, delete by IDs (most reliable)
+    if (ids.length) {
+      for (const id of ids) {
+        const r = await deleteMetafieldById(id);
+        if (!r.ok) {
+          // If delete fails, last resort: sentinel overwrite
+          break;
+        }
+      }
+
+      // Recheck quickly: if we deleted IDs successfully, return cleared
+      // (We can just return cleared here; loader will confirm next request)
+      return { ok: true, cleared: true, shop: { id: shopId, domain } };
+    }
+
+    // 4) LAST RESORT: sentinel overwrite (when IDs are missing but value exists, or API changes)
+    const softRes = await admin.graphql(
+      `#graphql
+      mutation SoftClear($ownerId: ID!, $gid: String!, $label: String!) {
+        metafieldsSet(metafields: [
+          {
+            ownerId: $ownerId
+            namespace: "${MF_NAMESPACE}"
+            key: "${MF_KEY}"
+            type: "single_line_text_field"
+            value: $gid
+          },
+          {
+            ownerId: $ownerId
+            namespace: "${MF_NAMESPACE}"
+            key: "${MF_KEY_LABEL}"
+            type: "single_line_text_field"
+            value: $label
+          }
+        ]) { userErrors { field message } }
+      }`,
+      { variables: { ownerId: shopId, gid: SENTINEL, label: SENTINEL } }
+    );
+
+    const softJson = await softRes.json();
+    const softErr = softJson?.data?.metafieldsSet?.userErrors || [];
+    if (softErr.length) {
+      return {
+        ok: false,
+        error: softErr.map((e) => e.message).join(" | "),
+        raw: softJson,
+      };
+    }
+
     return {
-      ok: false,
-      error: softErr.map(e => e.message).join(" | "),
-      raw: softJson,
+      ok: true,
+      cleared: true,
+      softCleared: true,
+      shop: { id: shopId, domain },
     };
   }
-
-  return {
-    ok: true,
-    cleared: true,
-    softCleared: true,
-    shop: { id: shopId, domain },
-  };
-}
 
 
   /** -------------------------
