@@ -247,7 +247,9 @@ export const action = async ({ request }) => {
     };
   };
 
-  /** clear_fee_meta */
+  /** -------------------------
+   * clear_fee_meta
+   * ------------------------- */
   if (intent === "clear_fee_meta") {
     const fields = await introspectMutationFields();
     const mfDelete = fields.find((f) => f.name === "metafieldDelete");
@@ -381,6 +383,7 @@ export const action = async ({ request }) => {
       }
     }
 
+    // fallback sentinel
     const softRes = await admin.graphql(
       `#graphql
       mutation SoftClear($ownerId: ID!, $gid: String!, $label: String!) {
@@ -422,7 +425,9 @@ export const action = async ({ request }) => {
     };
   }
 
-  /** update_fee_variant */
+  /** -------------------------
+   * update_fee_variant
+   * ------------------------- */
   if (intent === "update_fee_variant") {
     const variantId = safeTrim(formData.get("variantId"));
     const newLabel = safeTrim(formData.get("variantTitle"));
@@ -500,7 +505,9 @@ export const action = async ({ request }) => {
     };
   }
 
-  /** create_fee_product */
+  /** -------------------------
+   * create_fee_product
+   * ------------------------- */
   if (intent !== "create_fee_product") {
     return { ok: false, error: "Invalid intent." };
   }
@@ -511,6 +518,7 @@ export const action = async ({ request }) => {
   if (!productTitle)
     return { ok: false, error: "You must enter the product name." };
 
+  // 1) create product
   const createProductRes = await admin.graphql(
     `#graphql
     mutation CreateProduct($product: ProductCreateInput!) {
@@ -534,6 +542,7 @@ export const action = async ({ request }) => {
   const productId = createProductJson?.data?.productCreate?.product?.id;
   if (!productId) return { ok: false, error: "Unable to retrieve productId." };
 
+  // 2) create option
   const optRes = await admin.graphql(
     `#graphql
     mutation CreateOptions($productId: ID!, $options: [OptionCreateInput!]!) {
@@ -559,6 +568,7 @@ export const action = async ({ request }) => {
       raw: optJson,
     };
 
+  // 3) find the variant
   const variantsRes = await admin.graphql(
     `#graphql
     query GetProductVariants($id: ID!) {
@@ -597,6 +607,7 @@ export const action = async ({ request }) => {
     };
   }
 
+  // 4) update price
   const up = await updateVariantPriceBulk({
     productId,
     variantId: targetVariantId,
@@ -606,6 +617,7 @@ export const action = async ({ request }) => {
 
   const newVariantId = up.variant?.id || targetVariantId;
 
+  // 5) publish
   const pubsRes = await admin.graphql(`#graphql
     query Publications { publications(first: 50) { nodes { id name } } }
   `);
@@ -627,6 +639,7 @@ export const action = async ({ request }) => {
     );
   }
 
+  // 6) save metafields
   const mfRes = await admin.graphql(
     `#graphql
     mutation SaveMeta($ownerId: ID!, $gid: String!, $label: String!) {
@@ -697,12 +710,21 @@ export default function Index() {
     return `/api/health?shop=${encodeURIComponent(shopDomain)}`;
   }, [shopDomain]);
 
-  // load health on page open (with shop)
+  /** ✅ AJUSTE: no dispares health check inmediatamente (reduce reloads).
+   * - Espera un poco
+   * - Y NO corre si ya tenemos health
+   */
   useEffect(() => {
     if (!healthUrl) return;
-    healthFetcher.load(healthUrl);
+    if (health) return;
+
+    const t = setTimeout(() => {
+      healthFetcher.load(healthUrl);
+    }, 900); // puedes subir a 1200 si quieres
+
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [healthUrl]);
+  }, [healthUrl, health]);
 
   // store health response
   useEffect(() => {
@@ -736,12 +758,14 @@ export default function Index() {
     const d = healthFetcher.data;
     if (!d) return;
 
-    if (d?.ok && d?.repaired) shopify.toast.show("✅ Cart Transform repaired / reinstalled");
-    if (d?.ok && d?.repaired === false) shopify.toast.show("✅ Cart Transform already OK");
+    if (d?.ok && d?.repaired)
+      shopify.toast.show("✅ Cart Transform repaired / reinstalled");
+    if (d?.ok && d?.repaired === false)
+      shopify.toast.show("✅ Cart Transform already OK");
     if (d?.ok === false && d?.error) shopify.toast.show(`❌ ${d.error}`);
 
-    if (healthUrl && d?.ok) {
-      // refresh status after any successful call (GET or POST)
+    // ✅ AJUSTE: después de POST exitoso, refresca health 1 sola vez
+    if (healthUrl && d?.ok && healthFetcher.formMethod === "POST") {
       healthFetcher.load(healthUrl);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -777,6 +801,11 @@ export default function Index() {
     healthFetcher.submit(fd, { method: "POST", action: healthUrl });
   };
 
+  const manualRefreshHealth = () => {
+    if (!healthUrl) return;
+    healthFetcher.load(healthUrl);
+  };
+
   return (
     <s-page heading="Custom Fee Setup">
       {/* ✅ Health check section */}
@@ -784,29 +813,46 @@ export default function Index() {
         {!healthUrl ? (
           <s-paragraph>Loading shop domain...</s-paragraph>
         ) : health ? (
-          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+          <s-box
+            padding="base"
+            borderWidth="base"
+            borderRadius="base"
+            background="subdued"
+          >
             <s-paragraph>
-              Status: {health?.cartTransform?.exists ? "✅ OK" : "❌ Missing / deleted"}
+              Status:{" "}
+              {health?.cartTransform?.exists ? "✅ OK" : "❌ Missing / deleted"}
             </s-paragraph>
 
             <pre style={{ margin: 0 }}>
               <code>{health?.cartTransform?.id || "(no id)"}</code>
             </pre>
 
-            {!health?.cartTransform?.exists ? (
-              <s-stack direction="inline" gap="base">
+            <s-stack direction="inline" gap="base">
+              <s-button
+                onClick={manualRefreshHealth}
+                {...(healthFetcher.state === "loading"
+                  ? { loading: true }
+                  : {})}
+              >
+                Refresh status
+              </s-button>
+
+              {!health?.cartTransform?.exists ? (
                 <s-button
                   onClick={repairTransform}
                   {...(isRepairing ? { loading: true } : {})}
                 >
                   Repair / Reinstall
                 </s-button>
-              </s-stack>
-            ) : null}
+              ) : null}
+            </s-stack>
           </s-box>
         ) : (
           <s-paragraph>
-            {healthFetcher.state === "loading" ? "Loading health status..." : "No health data yet."}
+            {healthFetcher.state === "loading"
+              ? "Loading health status..."
+              : "Health not loaded yet."}
           </s-paragraph>
         )}
       </s-section>
@@ -814,8 +860,15 @@ export default function Index() {
       <s-section heading="Current status (saved variant validation)">
         {savedVariantGid ? (
           variantExists ? (
-            <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
-              <s-paragraph>✅ The saved variant exists. You can edit it:</s-paragraph>
+            <s-box
+              padding="base"
+              borderWidth="base"
+              borderRadius="base"
+              background="subdued"
+            >
+              <s-paragraph>
+                ✅ The saved variant exists. You can edit it:
+              </s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>
                   {loaderData?.variant?.id}{"\n"}
@@ -826,15 +879,24 @@ export default function Index() {
               </pre>
             </s-box>
           ) : (
-            <s-box padding="base" borderWidth="base" borderRadius="base" background="critical-subdued">
+            <s-box
+              padding="base"
+              borderWidth="base"
+              borderRadius="base"
+              background="critical-subdued"
+            >
               <s-paragraph>
-                ⚠️ A Variant GID is saved, but the variant no longer exists (it was deleted, or the product was deleted).
+                ⚠️ A Variant GID is saved, but the variant no longer exists (it
+                was deleted, or the product was deleted).
               </s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>{savedVariantGid}</code>
               </pre>
               <s-stack direction="inline" gap="base">
-                <s-button onClick={submitClear} {...(isLoading ? { loading: true } : {})}>
+                <s-button
+                  onClick={submitClear}
+                  {...(isLoading ? { loading: true } : {})}
+                >
                   Clear saved reference
                 </s-button>
               </s-stack>
@@ -871,11 +933,17 @@ export default function Index() {
           />
 
           {variantExists ? (
-            <s-button onClick={submitUpdate} {...(isLoading ? { loading: true } : {})}>
+            <s-button
+              onClick={submitUpdate}
+              {...(isLoading ? { loading: true } : {})}
+            >
               Save changes
             </s-button>
           ) : (
-            <s-button onClick={submitCreate} {...(isLoading ? { loading: true } : {})}>
+            <s-button
+              onClick={submitCreate}
+              {...(isLoading ? { loading: true } : {})}
+            >
               Create product + variant
             </s-button>
           )}
@@ -884,7 +952,12 @@ export default function Index() {
 
       <s-section heading="Current Variant GID">
         {savedVariantGid ? (
-          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+          <s-box
+            padding="base"
+            borderWidth="base"
+            borderRadius="base"
+            background="subdued"
+          >
             <pre style={{ margin: 0 }}>
               <code>{savedVariantGid}</code>
             </pre>
@@ -898,7 +971,10 @@ export default function Index() {
         <s-unordered-list>
           <s-list-item>
             For support inquiries, please contact{" "}
-            <s-link href="mailto:help@nexonixcore.com">help@nexonixcore.com</s-link>.
+            <s-link href="mailto:help@nexonixcore.com">
+              help@nexonixcore.com
+            </s-link>
+            .
           </s-list-item>
         </s-unordered-list>
       </s-section>
