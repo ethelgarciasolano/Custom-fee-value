@@ -1,0 +1,15 @@
+query CartTransformRunInput {
+  cart {
+    fee_rules: attribute(key: "_fee_rules") { value }
+    fee_variant_gid: attribute(key: "_fee_variant_gid") { value }
+    lines {
+      id
+      quantity
+      cost { amountPerQuantity { amount } }
+      merchandise {
+        __typename
+        ... on ProductVariant { id title }
+      }
+    }
+  }
+}

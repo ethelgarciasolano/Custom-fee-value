@@ -1,0 +1,46 @@
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-01"
+
+[[extensions]]
+name = "Custom fee value plus"
+handle = "custom-fee-value-plus"
+type = "ui_extension"
+uid = "4c0d9ef7-7799-0429-12e1-5e431afd969a9e35cc6a"
+
+[[extensions.targeting]]
+target = "purchase.checkout.block.render"
+module = "./src/Checkout.jsx"
+
+[extensions.capabilities]
+api_access = true
+
+[extensions.settings]
+
+[[extensions.settings.fields]]
+key = "fee_variant_gid"
+type = "single_line_text_field"
+name = "Fee Variant GID"
+description = "Paste the gid://shopify/ProductVariant/... of the fee product"
+
+[[extensions.settings.fields]]
+key = "message_title"
+type = "single_line_text_field"
+name = "Message title"
+default = "Additional fee"
+
+[[extensions.settings.fields]]
+key = "message_body"
+type = "multi_line_text_field"
+name = "Informational message"
+default = "An additional fee is automatically applied based on the total order value."
+
+[[extensions.settings.fields]]
+key = "fee_rules"
+type = "multi_line_text_field"
+name = "Fee rules by range (percentage)"
+description = "One per line. Format: MIN-MAX=PERCENT%. Example: 0-200000=10%"
+default = "0-200000=10%\n200001-500000=7%\n500001-999999999=3%"

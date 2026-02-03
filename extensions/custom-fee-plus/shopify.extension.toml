@@ -1,0 +1,22 @@
+api_version = "2025-07"
+
+[[extensions]]
+name = "t:name"
+handle = "custom-fee-plus"
+type = "function"
+uid = "ee45b1f8-5f39-acf8-4953-1290ec09ed0105ec327d"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/cart_transform_run.graphql"
+  export = "cart_transform_run"
+
+[extensions.build]
+command = "cargo build --target=wasm32-unknown-unknown --release"
+path = "target/wasm32-unknown-unknown/release/custom-fee-plus.wasm"
+  watch = [ "src/**/*.rs" ]
+
+  [extensions.ui.paths]
+  create = "/"
+  details = "/"
