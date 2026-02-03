@@ -109,7 +109,6 @@ export const action = async ({ request }) => {
     }
   };
 
-  // ✅ FIX: recursive unwrap until we find the real named type
   const unwrapNamedType = (t) => {
     let cur = t;
     while (cur) {
@@ -142,7 +141,6 @@ export const action = async ({ request }) => {
     return introspection?.data?.__type?.fields || [];
   };
 
-  /** ✅ Update price using productVariantsBulkUpdate (without relying on productVariantUpdate) */
   const updateVariantPriceBulk = async ({ productId, variantId, price }) => {
     const fields = await introspectMutationFields();
     const bulk = fields.find((f) => f.name === "productVariantsBulkUpdate");
@@ -159,7 +157,6 @@ export const action = async ({ request }) => {
     const byProductId = args.find((a) => a.name === "productId");
     const byVariants = args.find((a) => a.name === "variants");
 
-    // A) Input signature
     if (byInput) {
       const inputType = unwrapNamedType(byInput.type);
       if (!inputType) {
@@ -203,7 +200,6 @@ export const action = async ({ request }) => {
       };
     }
 
-    // B) (productId, variants) signature
     if (byProductId && byVariants) {
       const variantsType = unwrapNamedType(byVariants.type);
       if (!variantsType) {
@@ -251,9 +247,7 @@ export const action = async ({ request }) => {
     };
   };
 
-  /** -------------------------
-   * clear_fee_meta
-   * ------------------------- */
+  /** clear_fee_meta */
   if (intent === "clear_fee_meta") {
     const fields = await introspectMutationFields();
     const mfDelete = fields.find((f) => f.name === "metafieldDelete");
@@ -387,7 +381,6 @@ export const action = async ({ request }) => {
       }
     }
 
-    // fallback sentinel
     const softRes = await admin.graphql(
       `#graphql
       mutation SoftClear($ownerId: ID!, $gid: String!, $label: String!) {
@@ -429,16 +422,13 @@ export const action = async ({ request }) => {
     };
   }
 
-  /** -------------------------
-   * update_fee_variant
-   * ------------------------- */
+  /** update_fee_variant */
   if (intent === "update_fee_variant") {
     const variantId = safeTrim(formData.get("variantId"));
     const newLabel = safeTrim(formData.get("variantTitle"));
     const newPrice = normalizePrice(formData.get("basePrice") || "0.00");
     if (!variantId) return { ok: false, error: "Missing variantId." };
 
-    // get productId from node
     const vRes = await admin.graphql(
       `#graphql
       query VariantForUpdate($id: ID!) {
@@ -510,9 +500,7 @@ export const action = async ({ request }) => {
     };
   }
 
-  /** -------------------------
-   * create_fee_product
-   * ------------------------- */
+  /** create_fee_product */
   if (intent !== "create_fee_product") {
     return { ok: false, error: "Invalid intent." };
   }
@@ -523,7 +511,6 @@ export const action = async ({ request }) => {
   if (!productTitle)
     return { ok: false, error: "You must enter the product name." };
 
-  // 1) create product
   const createProductRes = await admin.graphql(
     `#graphql
     mutation CreateProduct($product: ProductCreateInput!) {
@@ -547,7 +534,6 @@ export const action = async ({ request }) => {
   const productId = createProductJson?.data?.productCreate?.product?.id;
   if (!productId) return { ok: false, error: "Unable to retrieve productId." };
 
-  // 2) create option
   const optRes = await admin.graphql(
     `#graphql
     mutation CreateOptions($productId: ID!, $options: [OptionCreateInput!]!) {
@@ -573,7 +559,6 @@ export const action = async ({ request }) => {
       raw: optJson,
     };
 
-  // 3) find the variant
   const variantsRes = await admin.graphql(
     `#graphql
     query GetProductVariants($id: ID!) {
@@ -612,7 +597,6 @@ export const action = async ({ request }) => {
     };
   }
 
-  // 4) update price
   const up = await updateVariantPriceBulk({
     productId,
     variantId: targetVariantId,
@@ -622,7 +606,6 @@ export const action = async ({ request }) => {
 
   const newVariantId = up.variant?.id || targetVariantId;
 
-  // 5) publish
   const pubsRes = await admin.graphql(`#graphql
     query Publications { publications(first: 50) { nodes { id name } } }
   `);
@@ -644,7 +627,6 @@ export const action = async ({ request }) => {
     );
   }
 
-  // 6) save metafields
   const mfRes = await admin.graphql(
     `#graphql
     mutation SaveMeta($ownerId: ID!, $gid: String!, $label: String!) {
@@ -690,8 +672,11 @@ export const action = async ({ request }) => {
 export default function Index() {
   const fetcher = useFetcher();
   const healthFetcher = useFetcher();
+
   const shopify = useAppBridge();
   const loaderData = useLoaderData();
+
+  const shopDomain = loaderData?.shop?.domain || "";
 
   const [productTitle, setProductTitle] = useState("Service fee");
   const [variantTitle, setVariantTitle] = useState(
@@ -707,11 +692,17 @@ export default function Index() {
 
   const isRepairing = healthFetcher.state !== "idle";
 
-  // load health on page open
+  const healthUrl = useMemo(() => {
+    if (!shopDomain) return null;
+    return `/api/health?shop=${encodeURIComponent(shopDomain)}`;
+  }, [shopDomain]);
+
+  // load health on page open (with shop)
   useEffect(() => {
-    healthFetcher.load("/api/health");
+    if (!healthUrl) return;
+    healthFetcher.load(healthUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [healthUrl]);
 
   // store health response
   useEffect(() => {
@@ -740,19 +731,21 @@ export default function Index() {
     if (fetcher.data?.error) shopify.toast.show(`❌ ${fetcher.data.error}`);
   }, [fetcher.data, shopify]);
 
-  // toast for health/repair
+  // toast + refresh after repair
   useEffect(() => {
-    if (healthFetcher.data?.ok && healthFetcher.data?.repaired)
-      shopify.toast.show("✅ Cart Transform repaired / reinstalled");
-    if (healthFetcher.data?.ok && healthFetcher.data?.repaired === false)
-      shopify.toast.show("✅ Cart Transform already OK");
-    if (healthFetcher.data?.ok === false && healthFetcher.data?.error)
-      shopify.toast.show(`❌ ${healthFetcher.data.error}`);
+    const d = healthFetcher.data;
+    if (!d) return;
 
-    // refresh status after repair
-    if (healthFetcher.data?.ok && healthFetcher.data?.repaired)
-      healthFetcher.load("/api/health");
-  }, [healthFetcher.data, shopify]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (d?.ok && d?.repaired) shopify.toast.show("✅ Cart Transform repaired / reinstalled");
+    if (d?.ok && d?.repaired === false) shopify.toast.show("✅ Cart Transform already OK");
+    if (d?.ok === false && d?.error) shopify.toast.show(`❌ ${d.error}`);
+
+    if (healthUrl && d?.ok) {
+      // refresh status after any successful call (GET or POST)
+      healthFetcher.load(healthUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [healthFetcher.data, shopify]);
 
   const submitCreate = () => {
     const fd = new FormData();
@@ -779,28 +772,25 @@ export default function Index() {
   };
 
   const repairTransform = () => {
+    if (!healthUrl) return;
     const fd = new FormData();
-    healthFetcher.submit(fd, { method: "POST", action: "/api/health" });
+    healthFetcher.submit(fd, { method: "POST", action: healthUrl });
   };
 
   return (
     <s-page heading="Custom Fee Setup">
-      {/* ✅ NEW: Health check section */}
+      {/* ✅ Health check section */}
       <s-section heading="Function health check (Cart Transform)">
-        {health ? (
-          <s-box
-            padding="base"
-            borderWidth="base"
-            borderRadius="base"
-            background="subdued"
-          >
+        {!healthUrl ? (
+          <s-paragraph>Loading shop domain...</s-paragraph>
+        ) : health ? (
+          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
             <s-paragraph>
-              Status:{" "}
-              {health?.cartTransform?.exists ? "✅ OK" : "❌ Missing / deleted"}
+              Status: {health?.cartTransform?.exists ? "✅ OK" : "❌ Missing / deleted"}
             </s-paragraph>
 
             <pre style={{ margin: 0 }}>
-              <code>{health?.cartTransform?.id || "(no id saved yet)"}</code>
+              <code>{health?.cartTransform?.id || "(no id)"}</code>
             </pre>
 
             {!health?.cartTransform?.exists ? (
@@ -815,19 +805,16 @@ export default function Index() {
             ) : null}
           </s-box>
         ) : (
-          <s-paragraph>Loading health status...</s-paragraph>
+          <s-paragraph>
+            {healthFetcher.state === "loading" ? "Loading health status..." : "No health data yet."}
+          </s-paragraph>
         )}
       </s-section>
 
       <s-section heading="Current status (saved variant validation)">
         {savedVariantGid ? (
           variantExists ? (
-            <s-box
-              padding="base"
-              borderWidth="base"
-              borderRadius="base"
-              background="subdued"
-            >
+            <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
               <s-paragraph>✅ The saved variant exists. You can edit it:</s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>
@@ -839,15 +826,9 @@ export default function Index() {
               </pre>
             </s-box>
           ) : (
-            <s-box
-              padding="base"
-              borderWidth="base"
-              borderRadius="base"
-              background="critical-subdued"
-            >
+            <s-box padding="base" borderWidth="base" borderRadius="base" background="critical-subdued">
               <s-paragraph>
-                ⚠️ A Variant GID is saved, but the variant no longer exists (it was
-                deleted, or the product was deleted).
+                ⚠️ A Variant GID is saved, but the variant no longer exists (it was deleted, or the product was deleted).
               </s-paragraph>
               <pre style={{ margin: 0 }}>
                 <code>{savedVariantGid}</code>
@@ -903,12 +884,7 @@ export default function Index() {
 
       <s-section heading="Current Variant GID">
         {savedVariantGid ? (
-          <s-box
-            padding="base"
-            borderWidth="base"
-            borderRadius="base"
-            background="subdued"
-          >
+          <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
             <pre style={{ margin: 0 }}>
               <code>{savedVariantGid}</code>
             </pre>
