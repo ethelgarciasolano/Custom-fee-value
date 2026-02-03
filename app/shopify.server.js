@@ -23,17 +23,30 @@ const shopify = shopifyApp({
     expiringOfflineAccessTokens: true,
   },
 
-hooks: {
-  afterAuth: async ({ admin }) => {
-    const shopRes = await admin.graphql(`#graphql
-      query { shop { id } }
-    `);
-    const shopJson = await shopRes.json();
-    const shopId = shopJson?.data?.shop?.id;
-
-    await ensureCartTransform(admin, shopId);
+  // ✅ 1) DEFINE WEBHOOKS AQUÍ
+  webhooks: {
+    APP_UNINSTALLED: {
+      deliveryMethod: "http",
+      callbackUrl: "/webhooks/app_uninstalled",
+    },
   },
-},
+
+  hooks: {
+    // ✅ 2) REGISTRA WEBHOOKS AL INSTALAR / AUTENTICAR
+    afterAuth: async ({ admin, session }) => {
+      // registra todos los webhooks declarados arriba
+      await shopify.registerWebhooks({ session });
+
+      // tu lógica actual
+      const shopRes = await admin.graphql(`#graphql
+        query { shop { id } }
+      `);
+      const shopJson = await shopRes.json();
+      const shopId = shopJson?.data?.shop?.id;
+
+      await ensureCartTransform(admin, shopId);
+    },
+  },
 
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
