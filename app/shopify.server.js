@@ -23,20 +23,18 @@ const shopify = shopifyApp({
     expiringOfflineAccessTokens: true,
   },
 
-  hooks: {
-    // Se ejecuta cuando termina auth (incluye instalación)
-    afterAuth: async ({ admin, session }) => {
-      try {
-        console.log("[afterAuth] shop=", session?.shop);
-
-        const r = await ensureCartTransform(admin, "custom-fee-plus");
-        console.log("[afterAuth] ensureCartTransform result:", r);
-      } catch (e) {
-        // NO romper el flujo de instalación
-        console.error("[afterAuth] ensureCartTransform FAILED:", e);
-      }
-    },
+hooks: {
+  afterAuth: async ({ admin, session }) => {
+    try {
+      console.log("[afterAuth] shop=", session?.shop);
+      const result = await ensureCartTransform(admin);
+      console.log("[afterAuth] ensureCartTransform result:", result);
+    } catch (e) {
+      console.log("[afterAuth] ensureCartTransform crashed:", e);
+      // NO throw -> evita 500
+    }
   },
+},
 
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }

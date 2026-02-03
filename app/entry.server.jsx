@@ -1,30 +1,26 @@
-// app/entry.server.jsx
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { renderToString } from "react-dom/server";
 import { ServerRouter } from "react-router";
 
-// ✅ React 18 / Vite: react-dom/server puede comportarse como CJS en algunos setups
-import pkg from "react-dom/server";
-const { renderToReadableStream } = pkg;
-
-export default async function handleRequest(
+export default function handleRequest(
   request,
   responseStatusCode,
   responseHeaders,
   routerContext
 ) {
-  // ✅ Headers correctos para embedded apps (CSP, etc.)
-  const headersFromBoundary = boundary.headers({ request, responseHeaders });
-  for (const [key, value] of headersFromBoundary.entries()) {
-    responseHeaders.set(key, value);
+  // Headers necesarios para embedded app (Shopify App Bridge)
+  const bHeaders = boundary.headers({ request, responseHeaders });
+  for (const [k, v] of bHeaders.entries()) {
+    responseHeaders.set(k, v);
   }
 
-  const stream = await renderToReadableStream(
+  const html = renderToString(
     <ServerRouter context={routerContext} url={request.url} />
   );
 
   responseHeaders.set("Content-Type", "text/html; charset=utf-8");
 
-  return new Response(stream, {
+  return new Response(`<!DOCTYPE html>${html}`, {
     status: responseStatusCode,
     headers: responseHeaders,
   });
