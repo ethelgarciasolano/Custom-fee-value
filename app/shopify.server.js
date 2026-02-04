@@ -1,4 +1,3 @@
-// app/shopify.server.js
 import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
@@ -7,7 +6,6 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { ensureCartTransform } from "./lib/ensureCartTransform";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -18,46 +16,17 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
-
   future: {
     expiringOfflineAccessTokens: true,
   },
-
-  // ✅ 1) DEFINE WEBHOOKS AQUÍ
-  webhooks: {
-    APP_UNINSTALLED: {
-      deliveryMethod: "http",
-      callbackUrl: "/webhooks/app/uninstalled",
-    },
-  },
-
-  hooks: {
-    // ✅ 2) REGISTRA WEBHOOKS AL INSTALAR / AUTENTICAR
-    afterAuth: async ({ admin, session }) => {
-      // registra todos los webhooks declarados arriba
-      await shopify.registerWebhooks({ session });
-
-      // tu lógica actual
-      const shopRes = await admin.graphql(`#graphql
-        query { shop { id } }
-      `);
-      const shopJson = await shopRes.json();
-      const shopId = shopJson?.data?.shop?.id;
-
-      await ensureCartTransform(admin, shopId);
-    },
-  },
-
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
 
 export default shopify;
-
 export const apiVersion = ApiVersion.October25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
-
 export const authenticate = shopify.authenticate;
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;

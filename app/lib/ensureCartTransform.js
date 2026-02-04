@@ -1,3 +1,4 @@
+// app/lib/ensureCartTransform.js
 const MF_NAMESPACE = "custom_fee";
 const MF_TRANSFORM_ID = "cart_transform_id";
 const HANDLE = "custom-fee-plus";
