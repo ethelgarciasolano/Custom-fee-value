@@ -7,53 +7,47 @@ import { authenticate } from "../shopify.server";
  * - customers/redact
  * - shop/redact
  *
- * Debe:
- * - Aceptar POST JSON
- * - Verificar HMAC (si inválido => 401)
- * - Responder 200 OK rápido
+ * Requisito App Review:
+ * - Si la firma HMAC es inválida -> responder 401 (NO 500)
+ * - Con firma válida -> responder 200 rápido
  */
 export const action = async ({ request }) => {
   try {
-    // ✅ En shopify-app-react-router normalmente existe authenticate.webhook(request)
-    // y se encarga de validar HMAC + parsear payload.
+    // ✅ Valida HMAC + parsea payload/topic/shop (si tu lib lo soporta)
     const { topic, shop, payload } = await authenticate.webhook(request);
 
-    console.log("[COMPLIANCE webhook]", { topic, shop });
+    console.log("[COMPLIANCE webhook] OK", { topic, shop });
 
     switch (topic) {
       case "customers/data_request": {
-        // Shopify te manda IDs del customer/orders solicitados.
-        // Si no guardas datos de clientes, igual responde 200.
-        // Si guardas, aquí debes preparar la respuesta al merchant por tu canal (no se responde por webhook).
+        // Si no guardas datos personales, basta con 200.
+        // Si guardas, aquí deberías preparar el proceso interno para responder al merchant.
         break;
       }
 
       case "customers/redact": {
-        // Shopify pide borrar/redactar datos del customer.
-        // Si guardas algo relacionado al customer, bórralo aquí.
+        // Si guardas datos del customer, borrarlos/anonimizarlos aquí.
         break;
       }
 
       case "shop/redact": {
-        // Shopify pide borrar datos de la tienda (48h después de uninstall).
-        // Aquí borra TODO lo asociado al shop en tu DB (sessions, configs, metafields propios si guardas copia, etc).
+        // Borra todo lo relacionado al shop en tu DB (sessions, configs, etc).
         break;
       }
 
-      default:
+      default: {
         console.log("[COMPLIANCE webhook] topic not handled:", topic);
+      }
     }
 
-    // ✅ Confirmar recibido (200-range) :contentReference[oaicite:4]{index=4}
+    // ✅ Shopify espera 200 cuando está OK
     return new Response(null, { status: 200 });
   } catch (e) {
-    // ✅ Si HMAC inválido Shopify exige 401 :contentReference[oaicite:5]{index=5}
+    // ✅ FIX CRÍTICO: Shopify App Review prueba HMAC inválido y espera 401.
+    // Tu curl mostró 500, por eso fallaba el check "Verifies webhooks with HMAC signatures".
     const msg = e?.message || String(e);
-    const isHmac =
-      /hmac|signature|unauthorized|forbidden|invalid/i.test(msg);
+    console.error("[COMPLIANCE webhook] FAILED (returning 401)", msg);
 
-    console.error("[COMPLIANCE webhook] error:", msg);
-
-    return new Response(msg, { status: isHmac ? 401 : 500 });
+    return new Response("Unauthorized", { status: 401 });
   }
 };
